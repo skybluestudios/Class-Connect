@@ -1,0 +1,122 @@
+<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><meta name=color-scheme content="light dark"><title>Class Connect Admin</title>
+<link rel=stylesheet href=style.css><script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script><script src=common.js></script></head><body>
+<div class=ov id=lock><div class=box><h2>🔒 Admin Console</h2><input class=in id=pw type=password placeholder="Password" onkeydown="event.key=='Enter'&&unlock()" style="width:100%"><br><br><button onclick=unlock()>Unlock</button><p id=pe class=bad></p></div></div>
+<header><b>🛡️ Class Connect Admin</b><span id=ast class="pill pn">starting…</span><span class=sp></span><span class=mu id=cnt></span><button class="sm g" onclick=signOut()>Sign out</button></header><main>
+<div class=c><h3>Global controls</h3><div class=row id=gl style="gap:4px 12px"></div>
+<div class=row id=gl2 style="margin-top:10px"></div>
+<div id=fs style="margin-top:12px"></div>
+<div class=row style="margin-top:14px"><input class=in id=bc placeholder="Message to every student in every class" style="flex:1;min-width:240px"><button onclick=bcast()>Send to all</button><button class=x onclick="allEyes(true)">👀 Eyes up – all</button><button class=g onclick="allEyes(false)">Release all</button><button class=g onclick="allCmd('close',0)">Close all classes</button><button class=g onclick="allCmd('open',0)">Open all</button></div></div>
+<div class=c><h3>📷 Webcams &amp; ⏺ recording</h3><small class=mu>Webcams stay on your school network (they are never sent over the internet). Students always see an indicator when their webcam is on or when recording is on.</small><div id=cr style="margin-top:8px"></div></div>
+<div class=c><h3>Teachers</h3><div class=row><input class=in id=tn placeholder="Teacher name" onkeydown="event.key=='Enter'&&addT()"><button onclick=addT()>Create 6-digit code</button></div><table id=tt></table></div>
+<div class=c><h3>Classes <button class="g sm" onclick=render()>Refresh</button></h3><small class=mu>Every class from every online teacher. Open “Screens” to see students live.</small><table id=ct></table></div>
+<div class="c hide" id=pv><h3 id=pvt></h3><div class=row id=pc style="margin-bottom:8px"></div><div id=pl style="margin-bottom:12px"></div>
+<div class=row style="margin:6px 0 12px"><button class="sm g" onclick=tickAll()>Select all</button><button class="sm r" id=rs onclick=rmSel()>Remove selected (0)</button><button class="sm r" onclick=clearAll()>Remove everyone</button><span class=sp></span><small class=mu>Click a screen to expand in high resolution</small></div>
+<div class=grid id=rt></div><br>
+<div class=row><input class=in id=pm placeholder="Message to students" style="flex:1;min-width:220px"><button onclick="pmsg(0)">Send to all</button><button onclick="pmsg(1)">Send to ticked</button><button class=g onclick=closePv()>Close</button></div></div>
+<div class=two><div class=c><h3>Activity from all teachers <button class="g sm" onclick=dl()>Download</button><button class="g sm" onclick="LOG.length=0;render()">Clear</button></h3><div class=lg id=lg></div></div>
+<div class=c><h3>Hidden students</h3><small class=mu>Their status and screen are not shown to any teacher.</small><div class=row style="margin-top:8px"><input class=in id=hn placeholder="Student name" onkeydown="event.key=='Enter'&&addH()"><button onclick=addH()>Hide</button></div><div id=hl style="margin-top:8px"></div>
+<h3 style="margin-top:20px">Account</h3><button class=g onclick=chPw()>Change admin password</button></div></div>
+</main>
+<script>
+if(window.NOGO)throw 0;
+let S=Object.assign({codes:[],hidden:[],msgs:true,eyes:true,f:{},pipAllow:false,canView:true,canRemove:true,cap:'bal',canCreate:true,canPresent:true,face:false,snap:{scr:false,cam:false,who:'both'},cam:{allow:false,ctl:'both',mode:'optional'},rec:{scr:false,cam:false,who:'both'},maxClasses:10,pauseAll:false,pwh:''},JSON.parse(localStorage.fm_admin||'{}')),T={},ticks=new Set(),sel=null,peer,rr=[],LOG=[],started=false;
+S.snap=Object.assign({scr:false,cam:false,who:'both'},S.snap);S.cam=Object.assign({allow:false,ctl:'both',mode:'optional'},S.cam);S.rec=Object.assign({scr:false,cam:false,who:'both'},S.rec);
+['focus','share','eyes','pip'].forEach(k=>S.f[k]=Object.assign({v:false,l:false},S.f[k]));
+const save=()=>localStorage.fm_admin=JSON.stringify(S),rec=c=>S.codes.find(x=>x.code==c)||{};
+const teacherOpen=()=>Date.now()-(+localStorage.fm_teacher_open||0)<4000;
+// Admin token: marks this device as an admin. While the teacher view is open here, the student page stays locked.
+async function unlock(){const p=$('pw').value,ok=S.pwh?(await sha(p))===S.pwh:p==='google123';if(!ok)return $('pe').textContent='Wrong password';localStorage.fm_admin_tok=Math.random().toString(36).slice(2);$('lock').classList.add('hide');if(!started){started=true;mk();render();setInterval(render,3000)}}
+function signOut(){if(teacherOpen())return toast('Close the teacher view on this device first');localStorage.removeItem('fm_admin_tok');location.reload()}
+async function chPw(){const a=prompt('New admin password (min 6 characters)');if(!a)return;if(a.length<6)return toast('Too short');S.pwh=await sha(a);save();toast('✅ Password changed')}
+function mk(){peer=mkPeer(ADMIN_ID);
+ peer.on('open',()=>{$('ast').className='pill pg';$('ast').textContent='Online'});
+ peer.on('disconnected',()=>{try{peer.reconnect()}catch(e){}});
+ peer.on('error',e=>{if(e.type=='unavailable-id'){$('ast').className='pill pa';$('ast').textContent='Waiting for old session to expire…';try{peer.destroy()}catch(x){}setTimeout(mk,4000)}else if(e.type!='peer-unavailable'){$('ast').className='pill pr';$('ast').textContent='Error: '+e.type}});
+ peer.on('connection',c=>{c.on('data',d=>h(c,d));c.on('close',()=>{for(const k in T)if(T[k].conn===c)delete T[k];render()})});
+ peer.on('call',call=>{if((call.metadata||{}).k=='pull'){const R=(PR.st&&T[PR.tc]&&T[PR.tc].rosters[PR.cid])||[],s=R.find(x=>x.pid==call.peer);if(s&&(PR.mode=='all'||PR.ids.includes(s.id))){call.answer(PR.st);PR.calls.set(call.peer,{call,t:Date.now()});call.on('close',()=>{const q=PR.calls.get(call.peer);if(q&&q.call===call)PR.calls.delete(call.peer)})}else try{call.close()}catch(e){}return}
+ call.answer();const cm=(call.metadata||{}).k=='cam',C=cm?ACC:AC,V=cm?AVC:AV,o=C[call.peer];if(o&&o!==call)try{o.close()}catch(e){}C[call.peer]=call;call.on('stream',st=>V[call.peer]=st);call.on('close',()=>{if(C[call.peer]===call){delete V[call.peer];delete C[call.peer]}})})}
+const AW=new Map(),AV={},AC={},AVC={},ACC={};
+setInterval(()=>Object.values(T).forEach(t=>{try{t.conn.open&&t.conn.send({t:'ping'})}catch(e){}}),2000);
+addEventListener('pagehide',()=>Object.values(T).forEach(t=>{try{t.conn.send({t:'bye'})}catch(e){}}));
+const of=c=>Object.keys(T).find(k=>T[k].conn===c);
+const all=()=>Object.entries(T).flatMap(([k,t])=>t.classes.map(c=>({...c,tc:k,tn:rec(k).name,pid:t.pid,paused:rec(k).paused||S.pauseAll})));
+function h(c,d){
+ if(d.t=='auth'){const r=rec(d.code);if(!r.code)return c.send({t:'authr',ok:0,why:'Code not recognised'});if(r.banned)return c.send({t:'authr',ok:0,why:'This account is banned'});
+  const k=of(c);if(k&&k!=r.code)delete T[k];T[r.code]={conn:c,pid:d.pid,classes:[],rosters:{}};c.send({t:'authr',ok:1,name:r.name});pol(r.code);render()}
+ else if(d.t=='classes'){const k=of(c);if(k){T[k].classes=d.list;render()}}
+ else if(d.t=='roster'){const k=of(c);if(k){T[k].rosters[d.cid]=d.students;if(sel&&sel.cid==d.cid)prev()}}
+ else if(d.t=='ev'){if(/is not visible to the camera$/.test(d.text))toast('📷 '+d.text);LOG.unshift({t:new Date(),x:d.text,c:d.cls});LOG.length=Math.min(LOG.length,200)}
+ else if(d.t=='list')c.send({t:'list',list:all().filter(x=>x.auto&&x.active&&!x.paused).map(x=>({name:x.name,code:x.cc}))});
+ else if(d.t=='lookup'){const x=all().find(x=>x.cc==d.code&&x.active&&!x.paused);c.send({t:'lookup',pid:x&&x.pid})}}
+function pol(k){const t=T[k];t&&t.conn.open&&t.conn.send({t:'policy',paused:!!rec(k).paused||S.pauseAll,hidden:S.hidden,msgs:S.msgs,eyes:S.eyes,f:S.f,pipAllow:S.pipAllow,canView:S.canView,canRemove:S.canRemove,cap:S.cap,canCreate:S.canCreate,maxClasses:S.maxClasses,canPresent:S.canPresent,camAllow:S.cam.allow,camCtl:S.cam.ctl,camMode:S.cam.mode,recScreen:S.rec.scr,recCam:S.rec.cam,recWho:S.rec.who,face:S.face,snapScr:S.snap.scr,snapCam:S.snap.cam,snapWho:S.snap.who})}
+const pushAll=()=>Object.keys(T).forEach(pol);
+function kick(k){const t=T[k];if(t){try{t.conn.send({t:'kick'})}catch(e){}setTimeout(()=>{try{t.conn.close()}catch(e){}},400);delete T[k]}}
+function addT(){const n=$('tn').value.trim();if(!n)return;let c;do c=String(Math.floor(100000+Math.random()*900000));while(rec(c).code);S.codes.push({code:c,name:n});save();$('tn').value='';render()}
+function ban(c){const r=rec(c);r.banned=!r.banned;save();if(r.banned)kick(c);render()}
+function pause(c){const r=rec(c);r.paused=!r.paused;save();pol(c);render()}
+function ren(c){const r=rec(c),n=prompt('Teacher name',r.name);if(n){r.name=n.slice(0,40);save();T[c]&&T[c].conn.send({t:'authr',ok:1,name:r.name});render()}}
+function tmsg(c){const t=prompt('Message to every student of this teacher');t&&T[c]&&T[c].conn.send({t:'bcast',text:t})}
+function del(c){if(!confirm('Delete this teacher code?'))return;S.codes=S.codes.filter(x=>x.code!=c);save();kick(c);render()}
+function setN(o,k,v){S[o][k]=v;save();pushAll();render();if(Rec.on&&!(S.rec.scr||S.rec.cam))recStop()}
+function setS(k,v){S[k]=v;save();pushAll();render()}
+function bcast(){const t=$('bc').value.trim();if(!t)return;Object.values(T).forEach(x=>x.conn.send({t:'bcast',text:t}));$('bc').value=''}
+function allCmd(a,on){Object.values(T).forEach(t=>{try{t.conn.send({t:'cmd',cid:'*',a,on})}catch(e){}});setTimeout(render,400)}
+function setF2(k,x,v){S.f[k][x]=v;save();if(x=='v')allCmd(k,v);pushAll();render()}
+function allEyes(on){Object.values(T).forEach(x=>x.conn.send({t:'cmd',cid:'*',a:'eyes',on}))}
+function dl(){const b=new Blob([LOG.map(e=>e.t.toISOString()+','+JSON.stringify(e.x)).join('\n')],{type:'text/csv'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='class-connect-log.csv';a.click()}
+function render(){if(!started)return;const nT=Object.keys(T).length,A=all(),act=A.filter(x=>x.active);
+ $('cnt').textContent=nT+' teacher'+(nT==1?'':'s')+' online · '+act.length+' open class'+(act.length==1?'':'es');
+ set($('gl'),sw('Pause ALL teachers',S.pauseAll,"setS('pauseAll',this.checked)")+sw('Allow messaging',S.msgs,"setS('msgs',this.checked)")+sw('Allow Eyes-up mode',S.eyes,"setS('eyes',this.checked)")+sw('📌 Allow picture-in-picture floating display',S.pipAllow,"setS('pipAllow',this.checked)")+sw('🖥️ Teachers can share their screen to students',S.canPresent,"setS('canPresent',this.checked)")+sw('Teachers can see screens',S.canView,"setS('canView',this.checked)")+sw('Teachers can remove students',S.canRemove,"setS('canRemove',this.checked)")+sw('Teachers can create classes',S.canCreate,"setS('canCreate',this.checked)"));
+ if(!$('gl2')._i){$('gl2')._i=1;$('gl2').innerHTML=`<label class=mu>Max classes per teacher <input class=in type=number min=1 max=50 style="width:80px;padding:6px 10px" value="${S.maxClasses}" onchange="setS('maxClasses',Math.max(1,+this.value||1))"></label><label class=mu>Screen quality <select class=in style="padding:6px 10px" onchange="setS('cap',this.value)"><option value=eco>Eco (lowest bandwidth)<option value=bal>Balanced<option value=max>Max (best quality)</select></label>`;$('gl2').querySelector('select').value=S.cap}
+ set($('fs'),'<table><tr><th>Class setting<th>Set for all classes now<th>Teachers may not change it</tr>'+[['focus','Focus monitoring'],['share','🖥️ Require full-screen sharing'],['eyes','👀 Eyes up on the board'],['pip','📌 Floating display (PiP)']].map(([k,l])=>`<tr><td>${l}<td>${sw('',S.f[k].v,`setF2('${k}','v',this.checked)`)}<td><label class=ck><input type=checkbox ${S.f[k].l?'checked':''} onchange="setF2('${k}','l',this.checked)"><i></i><span>🔒 Locked</span></label>`).join('')+'</table>');
+ const op=(v,l,c)=>`<option value=${v} ${c==v?'selected':''}>${l}`;
+ set($('cr'),`<div class=row style="gap:4px 14px">${sw('📷 Enable student webcams',S.cam.allow,"setN('cam','allow',this.checked)")}<label class=mu>Who turns webcams on/off <select class=in style="padding:6px 10px" onchange="setN('cam','ctl',this.value)">${op('both','Teachers and admin',S.cam.ctl)}${op('admin','Admin only',S.cam.ctl)}</select></label><label class=mu>Students <select class=in style="padding:6px 10px" onchange="setN('cam','mode',this.value)">${op('optional','May choose to share',S.cam.mode)}${op('required','Must allow their camera',S.cam.mode)}</select></label></div>
+ <div class=row style="gap:4px 14px;margin-top:8px">${sw('⏺ Allow screen recording',S.rec.scr,"setN('rec','scr',this.checked)")}${sw('⏺ Allow webcam recording',S.rec.cam,"setN('rec','cam',this.checked)")}<label class=mu>Who can record &amp; download <select class=in style="padding:6px 10px" onchange="setN('rec','who',this.value)">${op('both','Teachers and admin',S.rec.who)}${op('admin','Admin only',S.rec.who)}</select></label></div>
+ <div class=row style="gap:4px 14px;margin-top:8px">${sw('🙂 Face detection (students must stay visible to their webcam)',S.face,"setS('face',this.checked)")}<small class=mu>Needs webcams on. Students get an on-screen and floating-display reminder; teachers and admin are alerted.</small></div>
+ <div class=row style="gap:4px 14px;margin-top:8px">${sw('📸 Allow PNG photos of screens',S.snap.scr,"setN('snap','scr',this.checked)")}${sw('📸 Allow PNG photos of webcams',S.snap.cam,"setN('snap','cam',this.checked)")}<label class=mu>Who can take photos <select class=in style="padding:6px 10px" onchange="setN('snap','who',this.value)">${op('both','Teachers and admin',S.snap.who)}${op('admin','Admin only',S.snap.who)}</select></label><small class=mu>Click a student to expand, then 📸 Photo</small></div>`);
+ set($('tt'),'<tr><th>Teacher<th>Code<th>Status<th>Classes<th></tr>'+S.codes.map(r=>`<tr><td><b>${esc(r.name)}</b><td><code>${r.code}</code><td>${r.banned?'<span class="pill pr">Banned</span>':r.paused?'<span class="pill pa">Paused</span>':T[r.code]?'<span class="pill pg">Online</span>':'<span class="pill pn">Offline</span>'}<td>${T[r.code]?T[r.code].classes.length:0}<td><button class="sm ${r.banned?'x':'r'}" onclick="ban('${r.code}')">${r.banned?'Unban':'Ban'}</button> <button class="sm g" onclick="pause('${r.code}')">${r.paused?'Resume':'Pause'}</button> <button class="sm g" onclick="ren('${r.code}')">Rename</button> <button class="sm g" onclick="tmsg('${r.code}')">Message</button> <button class="sm g" onclick="del('${r.code}')">Delete</button>`).join(''));
+ set($('ct'),'<tr><th>Class<th>Teacher<th>Code<th>Status<th>Students<th>Sharing<th></tr>'+A.map(x=>{const R=T[x.tc].rosters[x.id]||[];return`<tr><td><b>${esc(x.name)}</b><td>${esc(x.tn)}<td><code>${x.cc}</code><td>${x.active?'<span class="pill pg">Open</span>':'<span class="pill pn">Closed</span>'}${x.focus?' <span class="pill pa">Focus</span>':''}<td>${R.length}<td>${R.filter(s=>s.sh).length}<td><button class=sm onclick="view('${x.tc}','${x.id}')">🖥️ Screens</button> <button class="sm g" onclick="cmd('${x.tc}','${x.id}','${x.active?'close':'open'}')">${x.active?'Close':'Open'}</button>`}).join(''));
+ set($('lg'),LOG.map(e=>`<div><span class=mu>${e.t.toLocaleTimeString()}</span> ${e.c=='pr'?'⚠️':'•'} ${esc(e.x)}</div>`).join('')||'<span class=mu>Nothing yet.</span>');
+ set($('hl'),S.hidden.map((n,i)=>`<span class="pill pn" style="margin:3px">${esc(n)} <a href="#" onclick="S.hidden.splice(${i},1);save();pushAll();render();return false">✕</a></span>`).join(''));
+ if(sel)prev()}
+function cmd(tc,cid,a,on,sid){T[tc]&&T[tc].conn.send({t:'cmd',cid,a,on,sid});setTimeout(render,300)}
+// ---- live screens: admin pulls streams directly from the students of one class
+const G=Grid($('rt'),{expand:id=>XP.open(id),tick:(i,v)=>{v?ticks.add(i):ticks.delete(i);prev()},rm:id=>rmIds([id])});
+const XP=Expand({snapK:()=>(S.snap.scr||S.snap.cam)?{scr:S.snap.scr,cam:S.snap.cam}:null,q:qSync,rm:id=>rmIds([id]),ids:()=>rr.map(s=>s.id),info:id=>{const s=rr.find(x=>x.id==id);return s&&{name:s.name,stream:AV[s.pid],cam:AVC[s.pid],txt:s.sh?'Sharing':s.st,cls:s.sh?'pg':'pn'}}});
+function view(tc,cid){if(Rec.on&&(!sel||sel.cid!=cid))return toast('Stop the current recording first');sel={tc,cid};ticks.clear();$('pv').classList.remove('hide');prev();$('pv').scrollIntoView({behavior:'smooth'})}
+function closePv(){if(Rec.on)return toast('Stop recording before closing this view');sel=null;XP.close();watch();$('pv').classList.add('hide')}
+function watch(){const want=new Set(sel?rr.filter(s=>s.pid).map(s=>s.pid):[]);
+ AW.forEach((o,p)=>{if(!want.has(p)){try{o.c.send({t:'unwatch'})}catch(e){}setTimeout(()=>{try{o.c.close()}catch(e){}},200);AW.delete(p);delete AV[p];delete AVC[p]}});
+ want.forEach(p=>{if(AW.has(p))return;const c=peer.connect(p,{reliable:true}),o={c,q:Rec.on?'mid':'low'};AW.set(p,o);c.on('open',()=>{c.send({t:'watch',q:o.q});if(Rec.on)c.send({t:'rec',on:1,k:recK()})});c.on('close',()=>{if(AW.get(p)===o)AW.delete(p)});c.on('error',()=>{})})}
+function qSync(){AW.forEach((o,p)=>{const s=rr.find(x=>x.pid==p),q=s&&XP.id==s.id?'high':Rec.on?'mid':'low';if(o.q!==q){o.q=q;if(o.c.open)o.c.send({t:'q',q})}})}
+function prev(){if(!sel||!T[sel.tc])return closePv();const x=all().find(y=>y.id==sel.cid);if(!x)return closePv();$('pvt').textContent='Screens: '+x.name+' ('+x.tn+')';rr=T[sel.tc].rosters[sel.cid]||[];
+ set($('pc'),sw('Focus monitoring',x.focus,`cmd('${sel.tc}','${sel.cid}','focus',this.checked)`)+sw('👀 Eyes up',x.eyes,`cmd('${sel.tc}','${sel.cid}','eyes',this.checked)`)+sw('🖥️ Require screen sharing',x.share,`cmd('${sel.tc}','${sel.cid}','share',this.checked)`)+sw('📌 Floating display',x.pip,`cmd('${sel.tc}','${sel.cid}','pip',this.checked)`,!S.pipAllow)+sw('📷 Webcams',x.cam,`cmd('${sel.tc}','${sel.cid}','cam',this.checked)`,!S.cam.allow));
+ set($('pl'),plHtml(x));
+ $('rs').textContent='Remove selected ('+ticks.size+')';watch();qSync();
+ G.update(rr.map(s=>({id:s.id,name:s.name,txt:s.st,cls:s.pid?(/Not visible/.test(s.st)?'pr':s.sh?'pg':'pa'):'pn',ck:ticks.has(s.id),stream:AV[s.pid],cam:AVC[s.pid]})));XP.refresh()}
+function rmIds(ids){if(!ids.length){toast('Select students first');return false}if(!confirm(`Remove ${ids.length} student${ids.length==1?'':'s'} from this class?`))return false;cmd(sel.tc,sel.cid,'kick',0,ids);ids.forEach(i=>ticks.delete(i));toast('🗑️ Removed '+ids.length);return true}
+const rmSel=()=>rmIds([...ticks]);
+function clearAll(){if(rr.length&&confirm('Remove EVERY student from this class?')){cmd(sel.tc,sel.cid,'clear');ticks.clear()}}
+function tickAll(){if(ticks.size==rr.length)ticks.clear();else rr.forEach(s=>ticks.add(s.id));prev()}
+function pmsg(x){const t=$('pm').value.trim();if(!t||!sel||!T[sel.tc])return;if(x&&!ticks.size)return toast('Tick students first');T[sel.tc].conn.send({t:'amsg',cid:sel.cid,ids:x?[...ticks]:null,text:t});$('pm').value='';toast('✅ Sent')}
+function addH(){const n=$('hn').value.trim();if(n){S.hidden.push(n);save();pushAll();$('hn').value='';render()}}
+setInterval(()=>{feedP();if(Rec.on)Rec.sync(rr.map(s=>({id:s.id,name:s.name,scr:AV[s.pid],cam:AVC[s.pid]})));if(!sel)return;prev();const n=Date.now();AW.forEach((o,p)=>{const st=AV[p],s=rr.find(x=>x.pid==p);if(s&&((s.sh&&!lv(st))||(s.cm&&!lv(AVC[p])))&&o.c.open&&n-(o.wd||0)>4000){o.wd=n;o.c.send({t:'watch',q:o.q})}})},1000);
+const recK=()=>Object.keys(Rec.k).filter(x=>Rec.k[x]);
+// ---- admin: present screen to a class or ticked students (window / tab / entire screen)
+var PR={st:null,mode:'all',tc:null,cid:null,ids:[],calls:new Map(),sent:{}};
+async function present(mode){if(!sel)return;if(mode=='sel'&&!ticks.size)return toast('Tick students first');stopPresent();
+ try{const st=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:24,max:30},width:{max:1920},height:{max:1080}},audio:true,selfBrowserSurface:'exclude',surfaceSwitching:'include'});
+  st.getVideoTracks()[0].onended=()=>{if(PR.st===st)stopPresent()};PR.sent={};PR.st=st;PR.mode=mode;PR.tc=sel.tc;PR.cid=sel.cid;PR.ids=mode=='sel'?[...ticks]:[];feedP();prev()}catch(e){toast('Sharing was cancelled')}}
+function stopPresent(){const st=PR.st;PR.st=null;if(st)st.getTracks().forEach(t=>{try{t.stop()}catch(e){}});PR.calls.forEach(o=>{try{o.call.close()}catch(e){}});PR.calls.clear();if(st)AW.forEach(o=>o.c.open&&o.c.send({t:'present',on:0}));if(st&&sel)prev()}
+function feedP(){if(!PR.st)return;const R=(T[PR.tc]&&T[PR.tc].rosters[PR.cid])||[],n=Date.now();R.forEach(s=>{const want=PR.mode=='all'||PR.ids.includes(s.id),o=PR.calls.get(s.pid),ch=s.pid&&AW.get(s.pid);
+  if(!want||!ch||!ch.c.open||(o&&o.call.open))return;if(n-(PR.sent[s.pid]||0)>3000){PR.sent[s.pid]=n;ch.c.send({t:'present',on:1,from:'Admin'})}})}
+// ---- admin: recording of the class being viewed
+function recStart(){if(!sel||Rec.on||!(S.rec.scr||S.rec.cam))return;const x=all().find(y=>y.id==sel.cid);Rec.start(sel.cid,x?x.name:'class',{scr:S.rec.scr,cam:S.rec.cam});AW.forEach(o=>o.c.open&&o.c.send({t:'rec',on:1,k:recK()}));qSync();prev()}
+async function recStop(){await Rec.stop();AW.forEach(o=>o.c.open&&o.c.send({t:'rec',on:0}));qSync();if(sel)prev();else render()}
+function recClear(){if(!Rec.on&&confirm('Discard all recorded footage in this browser?')){Rec.F=[];if(sel)prev()}}
+function adminPip(tc,cid,on){if(on&&!S.pipAllow){S.pipAllow=true;save();pushAll()}cmd(tc,cid,'pip',on)}
+function plHtml(x){const n=rr.filter(s=>s.cm).length;
+ return `<div class=row style="gap:8px 14px"><b>🖥️ Share my screen</b>${PR.st?`<span class="pill pg">Sharing to ${PR.mode=='all'?'the whole class':PR.ids.length+' selected'} · ${PR.calls.size} connected</span><button class="sm r" onclick=stopPresent()>⏹ Stop sharing</button>`:`<button class=sm onclick="present('all')">Whole class</button><button class="sm g" onclick="present('sel')">Ticked students (${ticks.size})</button><small class=mu>Window, browser tab, or entire screen</small>`}</div>
+ <div class=row style="gap:8px 14px;margin-top:8px"><b>📌 Floating display</b><button class="sm ${x.pip?'x':'g'}" onclick="adminPip('${sel.tc}','${sel.cid}',${!x.pip})">${x.pip?'ON · click to turn off':'Launch on student laptops'}</button><small class=mu>Opens after a student’s first click on their page</small>${S.cam.allow&&x.cam?`<span class=mu>📷 ${n} webcam${n==1?'':'s'} streaming</span>`:''}</div>
+ <div class=row style="gap:8px 14px;margin-top:8px"><b>⏺ Recording</b>${S.rec.scr||S.rec.cam?Rec.html():'<span class=mu>Turn on screen or webcam recording in “Webcams &amp; recording” above</span>'}</div>`}
+</script></body></html>

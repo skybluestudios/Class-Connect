@@ -1,0 +1,147 @@
+<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><meta name=color-scheme content="light dark"><title>Teacher Dashboard</title>
+<link rel=stylesheet href=style.css><script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script><script src=common.js></script></head><body>
+<div class=ov id=ov><div class=box><h2>👩‍🏫 Teacher Dashboard</h2>
+<div id=lg><p class=mu>Enter the 6-digit code from your admin</p><input class=in id=cd maxlength=6 inputmode=numeric placeholder="000000" style="font-size:28px;width:220px;text-align:center;letter-spacing:6px" onkeydown="event.key=='Enter'&&login()"><br><br><button class=x onclick=login()>Sign in</button></div>
+<p id=ovt class=mu></p><p id=err class=bad></p></div></div>
+<header><b>👩‍🏫 Class Connect</b><span id=hn class="row hide"><select class=in id=cs onchange="pick(this.value)" style="padding:7px 12px"></select><button class="sm g" onclick=addC()>+ Class</button><span class=tabs id=tb></span></span><span class=sp></span><span class=mu id=who></span></header>
+<main id=mn class=hide>
+<section id=vd><div class=tiles id=tl></div>
+<div class=two><div class=c><h3>Class controls</h3><div id=cb></div></div><div class=c><h3>Activity</h3><div class=fd id=fd></div></div></div>
+<div class=c><h3>Focus score by student</h3><div id=lb></div></div></section>
+<section id=vs class=hide><div class=c id=lt></div><div class=c><div class=row><input class=in id=q placeholder="🔍 Search students" oninput="q=this.value.toLowerCase();draw()" style="flex:1;min-width:180px"><span id=fc class=row></span><button class="sm g" onclick=tickAll()>Select all</button><button class="sm r" id=rs onclick="removeStudents([...ticks])">Remove selected (0)</button></div><small class=mu>Click a screen to expand it in high resolution. Previews stay low-bandwidth.</small></div><div class=grid id=rt></div></section>
+<section id=vm class=hide><div class=c><h3>Send a message</h3><p class=mu>Shown large on student screens. <b id=sel>0 selected</b> in the Students tab.</p>
+<div class=row id=qc style="margin-bottom:10px"></div>
+<textarea class=in id=mt rows=3 style="width:100%;resize:vertical" placeholder="Type your message… (⌘/Ctrl + Enter sends to the class)" onkeydown="(event.metaKey||event.ctrlKey)&&event.key=='Enter'&&msg(0)"></textarea>
+<div class=row style="margin-top:10px"><button onclick="msg(0)">Send to whole class</button><button class=g onclick="msg(1)">Send to selected students</button></div></div></section>
+</main>
+<script>
+if(window.NOGO)throw 0;
+// Token heartbeat: tells the student page on this device that the teacher view is open.
+const beat=()=>localStorage.fm_teacher_open=Date.now();beat();setInterval(beat,1000);addEventListener('pagehide',()=>localStorage.removeItem('fm_teacher_open'));
+let classes=JSON.parse(localStorage.fm_tc||'[]'),known=JSON.parse(localStorage.fm_ts||'{}'),code='',pid='',ac=null,authed=false,pol={hidden:[]},cur=null,tname='',last=0,err='',view='d',filt='all',q='',alertsOn=true,feed=[];
+let lastAdm=0,hadAdm=0,ps='';classes.forEach(k=>k.eyes=false);cur=classes[0]&&classes[0].id;
+const STU={},ticks=new Set(),col={pg:'#22c55e',pr:'#ef4444',pa:'#f59e0b',pn:'#94a3b8'};
+const sv=()=>{localStorage.fm_tc=JSON.stringify(classes);localStorage.fm_ts=JSON.stringify(known);sync()};
+const camEff=k=>!!(k&&k.cam&&pol.camAllow),camM=k=>camEff(k)?(pol.camMode=='req'?'req':'opt'):0,canCamCtl=()=>!!pol.camAllow&&pol.camCtl!='admin';
+const recKinds=()=>({scr:!!pol.recScreen,cam:!!pol.recCam}),canRec=()=>pol.recWho!='admin'&&pol.canView!==false&&(pol.recScreen||pol.recCam),recK=()=>Object.keys(Rec.k).filter(x=>Rec.k[x]);
+const snapK=()=>(pol.snapWho=='admin'||pol.canView===false||!(pol.snapScr||pol.snapCam))?null:{scr:!!pol.snapScr,cam:!!pol.snapCam};
+const LK=x=>!!(pol.f&&pol.f[x]&&pol.f[x].l),L=x=>LK(x)?' 🔒':'',needSh=k=>!!(k&&k.share),pipEff=k=>!!(k&&k.pip&&pol.pipAllow);
+function enforce(){classes.forEach(k=>['focus','eyes','share','pip'].forEach(x=>{if(LK(x)){const v=!!pol.f[x].v;if(!!k[x]!==v)ax(k,x,v)}}))}
+function ax(k,x,on){x=='focus'?setF(k,on):x=='eyes'?setE(k,on):x=='share'?setSh(k,on):setP(k,on)}
+function gone(){if(!authed)return;authed=false;try{ac.close()}catch(e){}ui();applyQ()}
+function setPause(v){if(v!==ps){ps=v;stuAll(v?{t:'pause',why:v}:{t:'resume'})}}
+function wd(){const n=Date.now();if(!authed)return;for(const c in STU)for(const i in STU[c]){const s=STU[c][i];if(s.c&&s.c.open&&s.q&&s.q!='off'&&((s.sh&&!lv(s.vs))||(s.cm&&!lv(s.vc)))&&n-(s.wd||0)>4000){s.wd=n;s.c.send({t:'watch',q:s.q})}}}
+function beep(){try{const a=new(window.AudioContext||window.webkitAudioContext)(),o=a.createOscillator();o.connect(a.destination);o.frequency.value=660;o.start();setTimeout(()=>{o.stop();a.close()},150)}catch(e){}}
+const hid=n=>(pol.hidden||[]).some(h=>h.toLowerCase()==n.toLowerCase());
+function ev(k,name,text,cls,notify){if(authed&&ac&&ac.open)ac.send({t:'ev',cls,text:tname+' · '+k.name+': '+name+' '+text});
+ if(hid(name))return;feed.unshift({t:new Date(),x:name+' '+text,c:cls});feed.length=Math.min(feed.length,40);
+ if(notify&&!pol.paused&&alertsOn){toast((cls=='pr'?'⚠️ ':'')+name+' '+text);beep()}}
+const peer=mkPeer();peer.on('open',i=>pid=i);peer.on('disconnected',()=>{try{peer.reconnect()}catch(e){}});peer.on('error',()=>{});
+// Student screens arrive as WebRTC calls (local network only)
+peer.on('call',call=>{if((call.metadata||{}).k=='pull'){const i=PR.st&&Object.keys(STU[PR.cid]||{}).find(i=>STU[PR.cid][i].pid==call.peer);if(i&&(PR.mode=='all'||PR.ids.includes(i))){call.answer(PR.st);PR.calls.set(call.peer,{call,t:Date.now()});call.on('close',()=>{const q=PR.calls.get(call.peer);if(q&&q.call===call)PR.calls.delete(call.peer)})}else try{call.close()}catch(e){}return}
+ call.answer();const cam=(call.metadata||{}).k=='cam',sk=cam?'vc':'vs',ck=cam?'call2':'call',s=byPid(call.peer);if(s){if(s[ck]&&s[ck]!==call)try{s[ck].close()}catch(e){}s[ck]=call}
+ call.on('stream',st=>{const x=byPid(call.peer);if(x)x[sk]=st});call.on('close',()=>{const x=byPid(call.peer);if(x&&x[ck]===call){x[sk]=null;x[ck]=null}})});
+function byPid(p){for(const c in STU)for(const i in STU[c])if(STU[c][i].pid==p)return STU[c][i]}
+const stuOf=sid=>{const k=cl();return k&&STU[k.id]&&STU[k.id][sid]};
+function login(){const v=$('cd').value.trim();if(!/^\d{6}$/.test(v)){err='Enter 6 digits';return ui()}code=v;err='';ui();if(ac&&ac.open)ac.send({t:'auth',code,pid});else{last=0;tick()}}
+function tick(){if(!code||!pid||(ac&&ac.open)||Date.now()-last<3500)return;last=Date.now();try{ac&&ac.close()}catch(e){}
+ ac=peer.connect(ADMIN_ID,{reliable:true});ac.on('open',()=>ac.send({t:'auth',code,pid}));ac.on('data',adm);ac.on('close',gone)}
+setInterval(tick,1000);
+function adm(d){lastAdm=Date.now();if(d.t=='ping')return;if(d.t=='bye')return gone();
+ if(d.t=='authr'){if(d.ok){authed=true;hadAdm=1;tname=d.name;err='';sync()}else{authed=false;code='';err=d.why}ui()}
+ else if(d.t=='policy'){pol=d;enforce();if(PR.st&&pol.canPresent===false)stopPresent();if(Rec.on&&!canRec())recStop();ui();stuAll({t:'policy',cap:pol.cap});classes.forEach(k=>{stuAll({t:'pip',on:pipEff(k)},k.id);stuAll({t:'cam',m:camM(k),face:!!pol.face},k.id)})}
+ else if(d.t=='kick'){setPause('paused');authed=false;code='';err='Access removed by admin';pol={hidden:[]};ui()}
+ else if(d.t=='amsg')send(d.cid,d.ids,d.text,'Admin')
+ else if(d.t=='bcast')classes.forEach(k=>send(k.id,null,d.text,'Admin'))
+ else if(d.t=='cmd'){(d.cid=='*'?classes.filter(k=>k.active||d.a=='open'):classes.filter(k=>k.id==d.cid)).forEach(k=>{if(d.a=='focus')setF(k,d.on);else if(d.a=='eyes')setE(k,d.on);else if(d.a=='share')setSh(k,d.on);else if(d.a=='pip')setP(k,d.on);else if(d.a=='cam'){if(pol.camAllow)setCam(k,d.on)}else if(d.a=='close'){k.active=false;sv()}else if(d.a=='open'){k.active=true;sv()}
+  else if(d.a=='kick')[].concat(d.sid).forEach(s=>kickS(k.id,s));else if(d.a=='clear')list(k).forEach(x=>kickS(k.id,x.id))});drawBar()}}
+function ui(){const w=!authed||pol.paused||!code;if(w){XP.close();stopPresent()}$('ov').classList.toggle('hide',!w);$('mn').classList.toggle('hide',w);$('hn').classList.toggle('hide',w);
+ $('lg').classList.toggle('hide',!!code);$('err').textContent=err;$('who').textContent=authed?tname:'';
+ $('ovt').textContent=!code?'':!authed?(hadAdm?'⛔ The admin has closed the admin control panel, so the system has been paused. It resumes automatically when the admin returns.':'⏳ Waiting for the admin console to come online…'):pol.paused?'⏸️ Viewing and control paused by admin':'';setPause(!code?ps:!authed?(hadAdm?'admin':''):pol.paused?'paused':'');
+ if(!w){drawBar();setView(view)}}
+function sync(){if(authed&&ac&&ac.open)ac.send({t:'classes',list:classes.map(c=>({id:c.id,name:c.name,cc:c.code,auto:c.auto,active:c.active,focus:c.focus,eyes:c.eyes,share:c.share,pip:c.pip,cam:c.cam}))})}
+const cl=()=>classes.find(c=>c.id==cur);
+function setView(v){view=v;['d','s','m'].forEach(x=>$('v'+x).classList.toggle('hide',x!=v));
+ set($('tb'),[['d','📊 Dashboard'],['s','🖥️ Students'],['m','💬 Message']].map(([k,l])=>`<button class="${k==v?'on':''}" onclick="setView('${k}')">${l}</button>`).join(''));draw();applyQ()}
+function addC(){if(pol.canCreate===false)return toast('Class creation is turned off by the admin');if(pol.maxClasses&&classes.length>=pol.maxClasses)return toast('Class limit reached ('+pol.maxClasses+')');
+ const n=prompt('Class name?');if(!n)return;let c;do c=String(Math.floor(100000+Math.random()*900000));while(classes.some(x=>x.code==c));
+ const k={id:'c'+Date.now(),name:n.slice(0,40),code:c,active:true,auto:true,focus:false,eyes:false,share:false};classes.push(k);cur=k.id;enforce();sv();drawBar()}
+function delC(){const k=cl();if(k&&confirm('Remove this class and its student list?')){list(k).forEach(x=>kickS(k.id,x.id));classes=classes.filter(c=>c.id!=cur);delete known[cur];cur=classes[0]&&classes[0].id;sv();drawBar()}}
+function wipe(){if(confirm('Delete all saved classes and students on this computer?')){localStorage.removeItem('fm_tc');localStorage.removeItem('fm_ts');location.reload()}}
+function pick(v){cur=v;ticks.clear();XP.close();drawBar()}
+function setF(k,on){k.focus=on;if(on)for(const i in STU[k.id]||{}){STU[k.id][i].on=0;STU[k.id][i].tot=0}stuAll({t:'focus',on},k.id);sv()}
+function setE(k,on){if(on&&pol.eyes===false)return;k.eyes=on;stuAll({t:'eyes',on},k.id);sv()}
+function setSh(k,on){k.share=on;stuAll({t:'share',on:needSh(k)},k.id);sv()}
+function setP(k,on){if(on&&!pol.pipAllow)return;k.pip=on;stuAll({t:'pip',on:on&&!!pol.pipAllow},k.id);sv()}
+function setCam(k,on){k.cam=on;stuAll({t:'cam',m:camM(k),face:!!pol.face},k.id);sv()}
+function tog(f){const c=cl();if(['focus','eyes','share','pip'].includes(f)&&LK(f))return toast('🔒 Locked by the admin');if(f=='pip'&&!pol.pipAllow)return toast('Not enabled by the admin');
+ if(f=='alerts')alertsOn=!alertsOn;else if(f=='focus')setF(c,!c.focus);else if(f=='eyes')setE(c,!c.eyes);else if(f=='share')setSh(c,!c.share);else if(f=='pip')setP(c,!c.pip);else if(f=='cam'){if(!canCamCtl())return toast('Webcams are controlled by the admin');setCam(c,!c.cam)}else{c[f]=!c[f];sv()}drawBar()}
+function kickS(cid,sid){const s=STU[cid]&&STU[cid][sid];if(s&&s.c){try{s.c.send({t:'no',why:'removed'});const c=s.c;setTimeout(()=>c.close(),300)}catch(e){}}if(STU[cid])delete STU[cid][sid];if(known[cid])delete known[cid][sid];ticks.delete(sid);sv()}
+function removeStudents(ids){if(pol.canRemove===false){toast('Removing students is turned off by the admin');return false}const k=cl();if(!k||!ids.length){toast('Select students first');return false}
+ if(!confirm(`Remove ${ids.length} student${ids.length==1?'':'s'} from ${k.name}?`))return false;ids.forEach(i=>kickS(k.id,i));toast('🗑️ Removed '+ids.length);draw();return true}
+function drawBar(){set($('cs'),classes.map(c=>`<option value="${c.id}" ${c.id==cur?'selected':''}>${esc(c.name)}</option>`).join(''));const c=cl();
+ set($('cb'),c?`<div class=mu>Class code</div><div class=code>${c.code}</div><div style="margin:8px 0">${sw('Class open',c.active,"tog('active')")}${sw('Auto-find',c.auto,"tog('auto')")}<br>${sw('Focus monitoring'+L('focus'),c.focus,"tog('focus')",LK('focus'))}${sw('👀 Eyes up on the board'+L('eyes'),c.eyes,"tog('eyes')",pol.eyes===false||LK('eyes'))}<br>${sw('🖥️ Require full-screen sharing'+L('share'),needSh(c),"tog('share')",LK('share'))}${sw('📌 Floating display (PiP)'+(pol.pipAllow?L('pip'):' — not enabled by admin'),pipEff(c),"tog('pip')",!pol.pipAllow||LK('pip'))}${sw('Alert pop-ups &amp; sound',alertsOn,"tog('alerts')")}</div>
+ <button class="sm r" onclick=delC()>Remove class</button> <button class="sm g" onclick=wipe()>Delete all saved data</button>`:'<p>Create a class with “+ Class” to begin.</p>');draw()}
+peer.on('connection',c=>{let s;c.on('data',d=>{
+ if(d.t=='hello'){const k=classes.find(x=>x.code==d.code&&x.active);if(!k||!authed||pol.paused){c.send({t:'no'});setTimeout(()=>c.close(),300);return}
+  // a student belongs to exactly one class at a time: drop them from every other class list
+  for(const cid in STU)if(cid!=k.id&&STU[cid][d.sid]){const o=STU[cid][d.sid];if(o.c&&o.c!==c){try{o.c.send({t:'no',why:'moved'});const x=o.c;setTimeout(()=>x.close(),300)}catch(e){}}delete STU[cid][d.sid]}
+  for(const cid in known)if(cid!=k.id&&known[cid][d.sid])delete known[cid][d.sid];
+  const m=STU[k.id]=STU[k.id]||{};s=m[d.sid]=Object.assign(m[d.sid]||{left:0,on:0,tot:0},{name:String(d.name).slice(0,40),c,st:'ok',ts:Date.now(),k:k.id,asl:0,pid:d.pid,q:'off',sh:false,cm:false});
+  (known[k.id]=known[k.id]||{})[d.sid]=s.name;sv();c.send({t:'yes',cname:k.name,focus:!!k.focus,eyes:!!k.eyes,share:needSh(k),pip:pipEff(k),cap:pol.cap,cam:camM(k),face:!!pol.face,rec:Rec.on&&Rec.cid==k.id?recK():null});c.send({t:'watch',q:'off'});ev(k,s.name,'joined','pg')}
+ else if(s&&d.t=='hb'){const w=s.st,ws=s.sh,k=classes.find(x=>x.id==s.k);s.st=d.st;s.sh=!!d.sh;const wf=s.fa;s.cm=!!d.cm;s.fa=!!d.fa;if(k&&d.fa&&!wf)ev(k,s.name,'is not visible to the camera','pr',1);else if(k&&!d.fa&&wf)ev(k,s.name,'is visible to the camera again','pg');s.ts=Date.now();
+  if(k&&d.st=='away'&&w!='away'){s.left++;ev(k,s.name,'left the page','pr',1)}else if(k&&d.st=='ok'&&w=='away')ev(k,s.name,'is back on the page','pg');
+  if(k&&needSh(k)&&ws&&!s.sh)ev(k,s.name,'stopped sharing their screen','pr',1);else if(k&&!ws&&s.sh)ev(k,s.name,'is sharing their screen','pg')}
+ else if(s&&d.t=='woke'){s.note='Woke from sleep '+new Date().toLocaleTimeString()}});
+ c.on('close',()=>{if(s&&s.c===c){s.c=null;s.vs=null;s.vc=null}})});
+function stuAll(m,cid){for(const id in STU)if(!cid||id==cid)for(const s in STU[id])if(STU[id][s].c&&STU[id][s].c.open)STU[id][s].c.send(m)}
+function status(k,s){if(!s||!s.c||!s.c.open)return['Not connected','pa'];if(needSh(k)&&!s.sh)return['Not sharing screen','pr'];if(s.fa)return['📷 Not visible to camera','pr'];if(!k.focus)return[s.sh?'Sharing screen':'Connected','pg'];
+ if(Date.now()-s.ts>10000)return['💤 Asleep / offline','pr'];return s.st=='away'?['Left the page','pr']:['On page','pg']}
+const list=k=>Object.keys(known[k.id]||{}).map(i=>({id:i,name:known[k.id][i],s:(STU[k.id]||{})[i]}));
+const tk=(i,v)=>{v?ticks.add(i):ticks.delete(i);draw()};
+function tickAll(){const k=cl();if(!k)return;const L=list(k);if(ticks.size==L.length)ticks.clear();else L.forEach(x=>ticks.add(x.id));draw()}
+// Only the class on screen, on the Students tab, streams. Everything else is switched off (zero bandwidth).
+function applyQ(){const k=cl();for(const cid in STU)for(const sid in STU[cid]){const s=STU[cid][sid];if(!s.c||!s.c.open)continue;
+ const rc=Rec.on&&cid==Rec.cid&&!hid(s.name)&&authed&&!pol.paused&&canRec(),w=(k&&cid==k.id&&view=='s'&&!hid(s.name)&&!document.hidden&&authed&&!pol.paused&&pol.canView!==false)?(XP.id==sid?'high':rc?'mid':'low'):rc?'mid':'off';if(s.q!==w){s.q=w;s.c.send({t:'q',q:w})}}}
+document.addEventListener('visibilitychange',applyQ);
+const G=Grid($('rt'),{expand:id=>XP.open(id),tick:tk,rm:id=>removeStudents([id])});
+const XP=Expand({snapK:()=>snapK(),q:applyQ,rm:id=>removeStudents([id]),ids:()=>vis().map(x=>x.id),info:id=>{const s=stuOf(id),k=cl();if(!s||!k||!known[k.id][id])return null;const[t,c]=status(k,s);return{name:s.name,stream:s.vs,cam:s.vc,txt:t,cls:c}}});
+let VL=[];const vis=()=>VL;
+function draw(){const k=cl();if(!k||$('mn').classList.contains('hide'))return;
+ const L=list(k).map(x=>{const h=hid(x.name),[t,c]=status(k,x.s);return{...x,h,t,c:h?'pn':c,pc:x.s&&x.s.tot>3?Math.round(x.s.on*100/x.s.tot):null}});
+ $('sel').textContent=ticks.size+' selected';$('rs').textContent='Remove selected ('+ticks.size+')';
+ if(view=='d'){const ok=L.filter(x=>x.c=='pg').length,att=L.filter(x=>x.c=='pr').length,P=L.filter(x=>x.pc!=null&&!x.h),avg=P.length?Math.round(P.reduce((a,x)=>a+x.pc,0)/P.length)+'%':'—',shr=L.filter(x=>x.s&&x.s.c&&x.s.sh).length;
+  set($('tl'),[['👥',L.length,'Students'],['🖥️',shr,'Sharing screen'],['⚠️',att,'Need attention'],['🎯',avg,'Avg focus']].map(([i,n,l])=>`<div class=stat>${i}<b>${n}</b><span class=mu>${l}</span></div>`).join(''));
+  set($('fd'),feed.map(e=>`<div><span class=mu>${e.t.toLocaleTimeString()}</span> ${e.c=='pr'?'⚠️':'•'} ${esc(e.x)}</div>`).join('')||'<span class=mu>No activity yet.</span>');
+  set($('lb'),k.focus?(P.length?P.sort((a,b)=>a.pc-b.pc).map(x=>`<div class=row style="margin:6px 0"><span style="width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.name)}</span><div class=bar style="flex:1"><i style="width:${x.pc}%;background:${x.pc<60?'var(--bad)':x.pc<85?'var(--wa)':'var(--ok)'}"></i></div><b style="width:44px;text-align:right">${x.pc}%</b></div>`).join(''):'<span class=mu>Collecting data…</span>'):'<span class=mu>Turn on Focus monitoring to see scores.</span>')}
+ if(view=='s'){const F=[['all','All'],['pr','Attention'],['pg','OK']];set($('fc'),F.map(([f,l])=>`<button class="sm chip ${filt==f?'on':''}" onclick="filt='${f}';draw()">${l}</button>`).join(''));
+  VL=L.filter(x=>(filt=='all'||x.c==filt)&&x.name.toLowerCase().includes(q));
+  G.update(VL.map(x=>({id:x.id,name:x.name,txt:x.h?'Hidden by admin':x.t,cls:x.c,ck:ticks.has(x.id),stream:x.h?null:x.s&&x.s.vs,cam:x.h?null:x.s&&x.s.vc})));XP.refresh()}
+ if(view=='s')set($('lt'),liveHtml(k));
+ if(view=='m')set($('qc'),['👀 Eyes up please','⏰ 5 minutes left','📖 Open your books','🤫 Quiet please'].map(t=>`<button class="sm chip" onclick="$('mt').value='${t}'">${t}</button>`).join(''))}
+function send(cid,ids,text,from){for(const i in STU[cid]||{}){const s=STU[cid][i];if(s.c&&s.c.open&&(!ids||ids.includes(i)))s.c.send({t:'msg',text,from})}}
+function msg(x){if(pol.msgs===false)return toast('Messaging is turned off by the admin');const t=$('mt').value.trim(),k=cl();if(!t||!k)return;if(x&&!ticks.size)return toast('Select students in the Students tab first');send(k.id,x?[...ticks]:null,t,tname||'Teacher');$('mt').value='';toast('✅ Message sent')}
+setInterval(()=>{const n=Date.now();classes.forEach(k=>{const m=STU[k.id]||{};for(const i in m){const s=m[i];if(!s.c||!s.c.open)continue;const asl=k.focus&&n-s.ts>10000;
+ if(k.focus){s.tot++;if(s.st!='away'&&!asl)s.on++}
+ if(asl&&!s.asl){s.asl=1;ev(k,s.name,'laptop went to sleep or went offline','pr',1)}else if(!asl&&s.asl){s.asl=0;ev(k,s.name,'is back online','pg')}}});if(authed&&Date.now()-lastAdm>7000)gone();wd();feedP();if(Rec.on)Rec.sync(Object.entries(STU[Rec.cid]||{}).filter(([i,s])=>!hid(s.name)).map(([i,s])=>({id:i,name:s.name,scr:s.vs,cam:s.vc})));applyQ();draw()},1000);
+setInterval(()=>{if(authed&&ac&&ac.open)classes.filter(k=>k.active).forEach(k=>ac.send({t:'roster',cid:k.id,students:list(k).map(x=>({id:x.id,name:x.name,st:status(k,x.s)[0],pid:x.s&&x.s.c&&x.s.c.open?x.s.pid:null,sh:!!(x.s&&x.s.c&&x.s.sh),cm:!!(x.s&&x.s.c&&x.s.cm),pct:x.s&&x.s.tot>3?Math.round(x.s.on*100/x.s.tot):null,left:x.s?x.s.left:0}))}))},2000);
+// ---- present my screen (window / tab / entire screen) to the whole class or to selected students
+var PR={st:null,mode:'all',cid:null,ids:[],calls:new Map(),sent:{}};
+async function present(mode){const k=cl();if(!k)return;if(pol.canPresent===false)return toast('Screen sharing to students is turned off by the admin');if(mode=='sel'&&!ticks.size)return toast('Select students first (tick them below)');
+ stopPresent();try{const st=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:24,max:30},width:{max:1920},height:{max:1080}},audio:true,selfBrowserSurface:'exclude',surfaceSwitching:'include'});
+  st.getVideoTracks()[0].onended=()=>{if(PR.st===st)stopPresent()};PR.sent={};PR.st=st;PR.mode=mode;PR.cid=k.id;PR.ids=mode=='sel'?[...ticks]:[];feedP();draw()}catch(e){toast('Sharing was cancelled')}}
+function stopPresent(){const st=PR.st;PR.st=null;if(st)st.getTracks().forEach(t=>{try{t.stop()}catch(e){}});PR.calls.forEach(o=>{try{o.call.close()}catch(e){}});PR.calls.clear();if(st){stuAll({t:'present',on:0});draw()}}
+function feedP(){if(!PR.st)return;const m=STU[PR.cid]||{},n=Date.now();for(const i in m){const s=m[i],want=PR.mode=='all'||PR.ids.includes(i),o=PR.calls.get(s.pid);
+  if(!want||!s.c||!s.c.open||!s.pid||!authed||pol.paused){if(o){try{o.call.close()}catch(e){}PR.calls.delete(s.pid)}continue}
+  if(o&&o.call.open)continue;if(n-(PR.sent[s.pid]||0)>3000){PR.sent[s.pid]=n;s.c.send({t:'present',on:1,from:tname||'Your teacher'})}}}
+// ---- recording
+function recStart(){const k=cl();if(!k||Rec.on)return;if(!canRec())return toast('Recording is not enabled by the admin');Rec.start(k.id,k.name,recKinds());stuAll({t:'rec',on:1,k:recK()},k.id);applyQ();draw()}
+async function recStop(){const k=classes.find(c=>c.id==Rec.cid);await Rec.stop();if(k)stuAll({t:'rec',on:0},k.id);applyQ();draw()}
+function recClear(){if(!Rec.on&&confirm('Discard all recorded footage in this browser?')){Rec.F=[];draw()}}
+function liveHtml(k){const n=list(k).filter(x=>x.s&&x.s.c&&x.s.cm).length;
+ return `<div class=row style="gap:8px 14px"><b>🖥️ Share my screen</b>${PR.st?`<span class="pill pg">Sharing to ${PR.mode=='all'?'the whole class':PR.ids.length+' selected'} · ${PR.calls.size} connected</span><button class="sm r" onclick=stopPresent()>⏹ Stop sharing</button>`:pol.canPresent===false?'<span class=mu>Turned off by the admin</span>':`<button class=sm onclick="present('all')">Whole class</button><button class="sm g" onclick="present('sel')">Selected students (${ticks.size})</button><small class=mu>You can pick a window, a browser tab, or your entire screen</small>`}</div>
+ <div class=row style="gap:4px 14px;margin-top:10px"><b>📷 Webcams</b>${!pol.camAllow?'<span class=mu>Not enabled by the admin</span>':canCamCtl()?sw('On for this class',!!k.cam,"tog('cam')")+`<span class="pill pn">${pol.camMode=='req'?'Required for students':'Optional for students'}</span>`+(k.cam?`<span class=mu>${n} streaming</span>`:''):`<span class=mu>Only the admin can switch webcams on or off${k.cam?' · currently ON ('+n+' streaming)':''}</span>`}</div>
+ <div class=row style="gap:4px 14px;margin-top:10px"><b>📌 Floating display</b>${pol.pipAllow?sw('Open on student laptops',pipEff(k),"tog('pip')",LK('pip'))+'<small class=mu>Opens after a student’s first click on their page</small>':'<span class=mu>Not enabled by the admin</span>'}</div>
+ <div class=row style="gap:4px 14px;margin-top:10px"><b>⏺ Recording</b>${canRec()?Rec.html():'<span class=mu>Not enabled for teachers by the admin</span>'}</div>`}
+ui();
+</script></body></html>
